@@ -1432,11 +1432,13 @@ bool do_command(THD *thd) {
   // Reclaim some memory
   thd->get_protocol_classic()->get_output_packet()->shrink(
       thd->variables.net_buffer_length);
-  /* Restore read timeout value */
+  
+  // 恢复线程读超时限制值
   my_net_set_read_timeout(net, thd->variables.net_read_timeout);
 
   DEBUG_SYNC(thd, "before_command_dispatch");
 
+  // 进入command parse
   return_value = dispatch_command(thd, &com_data, command);
   thd->get_protocol_classic()->get_output_packet()->shrink(
       thd->variables.net_buffer_length);
@@ -1668,22 +1670,20 @@ static void copy_bind_parameter_values(THD *thd, PS_PARAM *parameters,
 }
 
 /**
-  Perform one connection-level (COM_XXXX) command.
-
-  @param thd             connection handle
-  @param command         type of command to perform
-  @param com_data        com_data union to store the generated command
-
-  @todo
-    set thd->lex->sql_command to SQLCOM_END here.
-  @todo
-    The following has to be changed to an 8 byte integer
-
-  @retval
-    0   ok
-  @retval
-    1   request of thread shutdown, i. e. if command is
-        COM_QUIT
+ * 执行one 链接级(COM_XXXX)的命令
+ * @param thd 链接处理类，即线程
+ * @param command 执行的命令类型
+ * @param com_data union 存储生成的命令
+ * 
+ * @todo
+ *  在这里将 thd->lex->sql_command 设置为 SQLCOM_END
+ * @todo
+ *  以下内容必须更改为8字节正数
+ * 
+ * @retval
+ *  0 ok
+ * @retval
+ *  1 线程关闭请求，即命令是否为COM_QUIT
 */
 bool dispatch_command(THD *thd, const COM_DATA *com_data,
                       enum enum_server_command command) {
@@ -1811,6 +1811,7 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
     goto done;
   }
 
+  // 按照命令类型进行不同处理，此级别处理 COM_XXXX
   switch (command) {
     case COM_INIT_DB: {
       MYSQL_NOTIFY_STATEMENT_QUERY_ATTRIBUTES(thd->m_statement_psi, false);
@@ -2008,11 +2009,12 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
         mysqld_stmt_reset(thd, stmt);
       break;
     }
-    case COM_QUERY: {
+    case COM_QUERY: { // SELECT 类型
       assert(thd->m_digest == nullptr);
       thd->m_digest = &thd->m_digest_state;
       thd->m_digest->reset(thd->m_token_array, max_digest_length);
 
+      // 从数据包中读取查询语句并将其存储到thd->query
       if (alloc_query(thd, com_data->com_query.query,
                       com_data->com_query.length))
         break;  // fatal error is set
@@ -2049,9 +2051,11 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
       thd->set_secondary_engine_optimization(
           Secondary_engine_optimization::PRIMARY_TENTATIVELY);
 
+      // 放置参数
       copy_bind_parameter_values(thd, com_data->com_query.parameters,
                                  com_data->com_query.parameter_count);
 
+      // 执行线程
       dispatch_sql_command(thd, &parser_state);
 
       // Check if the statement failed and needs to be restarted in
@@ -2147,6 +2151,7 @@ bool dispatch_command(THD *thd, const COM_DATA *com_data,
         thd->set_secondary_engine_optimization(saved_secondary_engine);
       }
 
+      // 重置链接
       thd->bind_parameter_values = nullptr;
       thd->bind_parameter_values_count = 0;
 
@@ -2926,21 +2931,18 @@ static inline void binlog_gtid_end_transaction(THD *thd) {
 }
 
 /**
-  Execute command saved in thd and lex->sql_command.
-
-  @param thd                       Thread handle
-  @param first_level               whether invocation of the
-  mysql_execute_command() is a top level query or sub query. At the highest
-  level, first_level value is true. Stored procedures can execute sub queries.
-  In such cases first_level (recursive mysql_execute_command() call) will be
-  false.
-
-  @todo this is workaround. right way will be move invalidating in
-    the unlock procedure.
-  @todo use check_change_password()
-
-  @retval false       OK
-  @retval true        Error
+ * 执行保存在thd中的命令和lex->sql_command
+ * 
+ * @param thd 线程句柄
+ * @param first_level  mysql_execute_command()的调用是顶级还是子查询。
+ * 在最高级别，first_level为true。存储过程可以执行子查询。在这种情况下，
+ * first_level（递归调用 mysql_execute_command()）将为false。
+ * 
+ * @todo 这是解决办法。正确的方法将使解锁过程中的移动无效。
+ * @todo 使用 check_change_password() 
+ * 
+ * @retval false OK
+ * @retval true Error
 */
 
 int mysql_execute_command(THD *thd, bool first_level) {
@@ -3007,6 +3009,9 @@ int mysql_execute_command(THD *thd, bool first_level) {
     outer Query_block we have following check:
     assert(first_table == all_tables);
     assert(first_table == all_tables && first_table != 0);
+  */
+ /**
+  * 在许多场景中，主Query_block的第一个表具有特殊含义。
   */
   lex->first_lists_tables_same();
   /* should be assigned after making first tables same */
@@ -5230,12 +5235,12 @@ void statement_id_to_session(THD *thd) {
 */
 
 /**
-  Parse an SQL command from a text string and pass the resulting AST to the
-  query executor.
-
-  @param thd          Current session.
-  @param parser_state Parser state.
-*/
+ * 从文本字符串中解析SQL命令，并将生成的AST传递给查询执行器
+ * thd->query().str 就是文本字符串
+ * 
+ * @param thd 当前会话
+ * @param parser_state 解析器状态 
+ */
 
 void dispatch_sql_command(THD *thd, Parser_state *parser_state) {
   DBUG_TRACE;
@@ -5247,6 +5252,7 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state) {
   // It is possible that rewritten query may not be empty (in case of
   // multiqueries). So reset it.
   thd->reset_rewritten_query();
+  // 初始化了用于此查询的成本模型，并确保当前查询块为空
   lex_start(thd);
 
   thd->m_parser_state = parser_state;
@@ -5261,13 +5267,17 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state) {
   LEX *lex = thd->lex;
   const char *found_semicolon = nullptr;
 
+  // 检查当前语句块是否存在错误
   bool err = thd->get_stmt_da()->is_error();
+  // 用于保存解析后的SQL语句长度
   size_t qlen = 0;
 
   if (!err) {
+    // 解析SQL语句
     err = parse_sql(thd, parser_state, nullptr);
+    // 解析成功后，调用函数
     if (!err) err = invoke_post_parse_rewrite_plugins(thd, false);
-
+    // char*类型的分号
     found_semicolon = parser_state->m_lip.found_semicolon;
     qlen = found_semicolon ? (found_semicolon - thd->query().str)
                            : thd->query().length;
@@ -5367,7 +5377,7 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state) {
           auto mgr_ptr = resourcegroups::Resource_group_mgr::instance();
           bool switched = mgr_ptr->switch_resource_group_if_needed(
               thd, &src_res_grp, &dest_res_grp, &ticket, &cur_ticket);
-
+          // 执行SQL语句
           error = mysql_execute_command(thd, true);
 
           if (switched)
@@ -5413,6 +5423,7 @@ void dispatch_sql_command(THD *thd, Parser_state *parser_state) {
   THD_STAGE_INFO(thd, stage_freeing_items);
   sp_cache_enforce_limit(thd->sp_proc_cache, stored_program_cache_size);
   sp_cache_enforce_limit(thd->sp_func_cache, stored_program_cache_size);
+  // 清理资源
   thd->lex->destroy();
   thd->end_statement();
   thd->cleanup_after_query();
